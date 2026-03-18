@@ -37,6 +37,13 @@ function parseLines(text) {
     .filter(Boolean);
 }
 
+// Helper: extract Vicidial lead ID from add_lead response
+// Typical response: "SUCCESS: add_lead - 12345 - lead added"
+function parseLeadId(responseText) {
+  const match = responseText.match(/SUCCESS:.*?add_lead.*?-\s*(\d+)/i);
+  return match ? match[1] : null;
+}
+
 // ─── Health check ───────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "vicidial-proxy" });
@@ -123,9 +130,12 @@ app.post("/push-leads", async (req, res) => {
         const text = await response.text();
         console.log(`Lead ${lead.lead_ref}: ${text}`);
 
+        const vicidialLeadId = parseLeadId(text);
+
         results.push({
           lead_ref: lead.lead_ref,
           success: response.ok && text.includes("SUCCESS"),
+          vicidial_lead_id: vicidialLeadId,
           response: text,
         });
       } catch (err) {
@@ -133,6 +143,7 @@ app.post("/push-leads", async (req, res) => {
         results.push({
           lead_ref: lead.lead_ref,
           success: false,
+          vicidial_lead_id: null,
           error: err.message,
         });
       }
