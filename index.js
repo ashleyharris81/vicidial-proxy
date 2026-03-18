@@ -70,16 +70,16 @@ app.get("/campaigns", async (req, res) => {
 // Get agents
 app.get("/agents", async (req, res) => {
   try {
-    // Try agent_stats_export for today
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const params = new URLSearchParams({
       source: "test",
       user: API_USER,
       pass: API_PASS,
       function: "agent_stats_export",
-      datetime_start: today + "000000",
+      datetime_start: "20250101000000",
       datetime_end: today + "235959",
-      agent_user: req.query.user || "---ALL---",
+      agent_user: "---ALL---",
+      header: "YES",
     });
     const r = await fetch(`${VICIDIAL_BASE_URL}/non_agent_api.php?${params}`);
     const text = await r.text();
@@ -88,6 +88,22 @@ app.get("/agents", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+function parseAgents(text) {
+  const agents = [];
+  const seen = new Set();
+  const lines = text.split("\n").filter(l => l.trim());
+  for (const line of lines) {
+    if (line.startsWith("SUCCESS") || line.startsWith("ERROR") || line.startsWith("NOTICE") || line.startsWith("user")) continue;
+    const parts = line.split("|").map(s => s.trim());
+    if (parts.length >= 2 && !seen.has(parts[0])) {
+      seen.add(parts[0]);
+      agents.push({ user: parts[0], name: parts[1] });
+    }
+  }
+  return agents;
+}
+
 
 function parseLines(text) {
   return text.split("\n").filter(l => l.trim() && !l.startsWith("SUCCESS") && !l.startsWith("ERROR") && !l.startsWith("NOTICE"))
