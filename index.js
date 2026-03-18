@@ -65,15 +65,21 @@ app.get("/campaigns", async (req, res) => {
   }
 });
 
+});
+
 // Get agents
 app.get("/agents", async (req, res) => {
   try {
+    // Try agent_stats_export for today
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const params = new URLSearchParams({
       source: "test",
       user: API_USER,
       pass: API_PASS,
-      function: "user_group_status",
-      user_group: req.query.group || "---ALL---",
+      function: "agent_stats_export",
+      datetime_start: today + "000000",
+      datetime_end: today + "235959",
+      agent_user: req.query.user || "---ALL---",
     });
     const r = await fetch(`${VICIDIAL_BASE_URL}/non_agent_api.php?${params}`);
     const text = await r.text();
