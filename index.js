@@ -68,33 +68,18 @@ app.get("/campaigns", async (req, res) => {
 // Get agents
 app.get("/agents", async (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const params = new URLSearchParams({
       source: "test",
       user: API_USER,
       pass: API_PASS,
       function: "agent_stats_export",
-      datetime_start: "20250101000000",
-      datetime_end: today + "235959",
+      datetime_start: "2025-01-01+00:00:00",
+      datetime_end: new Date().toISOString().slice(0, 10) + "+23:59:59",
       header: "YES",
     });
     const r = await fetch(`${VICIDIAL_BASE_URL}/non_agent_api.php?${params}`);
     const text = await r.text();
-
-    // If that fails, try user_group_status
-    if (text.includes("ERROR")) {
-      const params2 = new URLSearchParams({
-        source: "test",
-        user: API_USER,
-        pass: API_PASS,
-        function: "user_group_status",
-      });
-      const r2 = await fetch(`${VICIDIAL_BASE_URL}/non_agent_api.php?${params2}`);
-      const text2 = await r2.text();
-      res.json({ agents: parseAgents(text2), raw: text2, fallback: true, original_error: text });
-    } else {
-      res.json({ agents: parseAgents(text), raw: text });
-    }
+    res.json({ agents: parseAgents(text), raw: text });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
