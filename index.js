@@ -65,6 +65,24 @@ app.get("/campaigns", async (req, res) => {
   }
 });
 
+// Get agents
+app.get("/agents", async (req, res) => {
+  try {
+    const params = new URLSearchParams({
+      source: "test",
+      user: API_USER,
+      pass: API_PASS,
+      function: "user_group_status",
+      user_group: req.query.group || "---ALL---",
+    });
+    const r = await fetch(`${VICIDIAL_BASE_URL}/non_agent_api.php?${params}`);
+    const text = await r.text();
+    res.json({ agents: parseAgents(text), raw: text });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function parseLines(text) {
   return text.split("\n").filter(l => l.trim() && !l.startsWith("SUCCESS") && !l.startsWith("ERROR") && !l.startsWith("NOTICE"))
     .map(line => {
@@ -74,6 +92,19 @@ function parseLines(text) {
       if (p.length >= 2) return { id: p[0], name: p[1] };
       return { id: line.trim(), name: line.trim() };
     });
+}
+
+function parseAgents(text) {
+  const agents = [];
+  const lines = text.split("\n").filter(l => l.trim());
+  for (const line of lines) {
+    if (line.startsWith("SUCCESS") || line.startsWith("ERROR") || line.startsWith("NOTICE")) continue;
+    const parts = line.split("|").map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      agents.push({ user: parts[0], name: parts[1], status: parts[2] || "", campaign: parts[3] || "" });
+    }
+  }
+  return agents;
 }
 
 app.listen(process.env.PORT || 3000, () => console.log("Proxy running"));
