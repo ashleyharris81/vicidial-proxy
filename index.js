@@ -65,8 +65,6 @@ app.get("/campaigns", async (req, res) => {
   }
 });
 
-});
-
 // Get agents
 app.get("/agents", async (req, res) => {
   try {
@@ -89,22 +87,6 @@ app.get("/agents", async (req, res) => {
   }
 });
 
-function parseAgents(text) {
-  const agents = [];
-  const seen = new Set();
-  const lines = text.split("\n").filter(l => l.trim());
-  for (const line of lines) {
-    if (line.startsWith("SUCCESS") || line.startsWith("ERROR") || line.startsWith("NOTICE") || line.startsWith("user")) continue;
-    const parts = line.split("|").map(s => s.trim());
-    if (parts.length >= 2 && !seen.has(parts[0])) {
-      seen.add(parts[0]);
-      agents.push({ user: parts[0], name: parts[1] });
-    }
-  }
-  return agents;
-}
-
-
 function parseLines(text) {
   return text.split("\n").filter(l => l.trim() && !l.startsWith("SUCCESS") && !l.startsWith("ERROR") && !l.startsWith("NOTICE"))
     .map(line => {
@@ -118,12 +100,14 @@ function parseLines(text) {
 
 function parseAgents(text) {
   const agents = [];
+  const seen = new Set();
   const lines = text.split("\n").filter(l => l.trim());
   for (const line of lines) {
-    if (line.startsWith("SUCCESS") || line.startsWith("ERROR") || line.startsWith("NOTICE")) continue;
-    const parts = line.split("|").map(s => s.trim()).filter(Boolean);
-    if (parts.length >= 2) {
-      agents.push({ user: parts[0], name: parts[1], status: parts[2] || "", campaign: parts[3] || "" });
+    if (line.startsWith("SUCCESS") || line.startsWith("ERROR") || line.startsWith("NOTICE") || line.startsWith("user")) continue;
+    const parts = line.split("|").map(s => s.trim());
+    if (parts.length >= 2 && !seen.has(parts[0])) {
+      seen.add(parts[0]);
+      agents.push({ user: parts[0], name: parts[1] });
     }
   }
   return agents;
