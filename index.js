@@ -65,7 +65,7 @@ app.get("/campaigns", async (req, res) => {
   }
 });
 
-// Get agents
+// Get agents (active/logged in)
 app.get("/agents", async (req, res) => {
   try {
     const params = new URLSearchParams({
@@ -80,6 +80,36 @@ app.get("/agents", async (req, res) => {
     const r = await fetch(`${VICIDIAL_BASE_URL}/non_agent_api.php?${params}`);
     const text = await r.text();
     res.json({ agents: parseAgents(text), raw: text });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all users (scrapes admin panel)
+app.get("/users", async (req, res) => {
+  try {
+    const url = `${VICIDIAL_BASE_URL}/admin.php?ADD=100`;
+    const r = await fetch(url, {
+      headers: {
+        'Authorization': 'Basic ' + Buffer.from(API_USER + ':' + API_PASS).toString('base64'),
+      },
+    });
+    const html = await r.text();
+
+    const users = [];
+    const regex = /<tr[^>]*>.*?<td[^>]*><a[^>]*>([^<]+)<\/a><\/td>\s*<td[^>]*>([^<]*)<\/td>\s*<td[^>]*>([^<]*)<\/td>\s*<td[^>]*>([^<]*)<\/td>\s*<td[^>]*>([^<]*)<\/td>/gis;
+    let match;
+    while ((match = regex.exec(html)) !== null) {
+      users.push({
+        user_id: match[1].trim(),
+        full_name: match[2].trim(),
+        level: match[3].trim(),
+        group: match[4].trim(),
+        active: match[5].trim(),
+      });
+    }
+
+    res.json({ users, count: users.length, raw_length: html.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
