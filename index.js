@@ -38,9 +38,10 @@ function parseLines(text) {
 }
 
 // Helper: extract Vicidial lead ID from add_lead response
-// Typical response: "SUCCESS: add_lead - 12345 - lead added"
+// Actual response: "SUCCESS: add_lead - 393757456818 - newlead 9"
+// The lead ID is the number after "newlead", NOT the phone number
 function parseLeadId(responseText) {
-  const match = responseText.match(/SUCCESS:.*?add_lead.*?-\s*(\d+)/i);
+  const match = responseText.match(/newlead\s+(\d+)/i);
   return match ? match[1] : null;
 }
 
