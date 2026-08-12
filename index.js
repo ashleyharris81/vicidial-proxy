@@ -165,6 +165,37 @@ app.post("/create-list", async (req, res) => {
   }
 });
 
+app.post("/update-lead", async (req, res) => {
+  const apiUser = process.env.VICIDIAL_API_USER;
+  const apiPass = process.env.VICIDIAL_API_PASS;
+  if (!apiUser || !apiPass) return res.status(500).json({ error: "Vicidial credentials not configured" });
+
+  const { vendor_lead_code, phone_number, first_name = "", last_name = "", email = "", lead_id } = req.body || {};
+  if (!lead_id && !vendor_lead_code) return res.status(400).json({ error: "vendor_lead_code or lead_id is required" });
+
+  try {
+    const params = new URLSearchParams({
+      source: "test", user: apiUser, pass: apiPass, function: "update_lead",
+      first_name: String(first_name), last_name: String(last_name), email: String(email),
+      search_method: lead_id ? "LEAD_ID" : "VENDOR_LEAD_CODE",
+    });
+    if (lead_id) {
+      params.set("lead_id", String(lead_id));
+    } else {
+      params.set("vendor_lead_code", String(vendor_lead_code));
+      if (phone_number) params.set("phone_number", String(phone_number).replace(/[^0-9]/g, ""));
+    }
+
+    const url = `${VICIDIAL_BASE_URL}/non_agent_api.php?${params.toString()}`;
+    const response = await fetch(url);
+    const text = await response.text();
+    const success = text.includes("SUCCESS");
+    return res.status(success ? 200 : 502).json({ success, response: text });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Unknown error" });
+  }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Vicidial proxy running on port ${PORT}`);
