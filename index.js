@@ -111,6 +111,29 @@ app.get("/agents", async (req, res) => {
   }
 });
 
+app.post("/purge-hopper", async (req, res) => {
+  const apiUser = process.env.VICIDIAL_API_USER;
+  const apiPass = process.env.VICIDIAL_API_PASS;
+  if (!apiUser || !apiPass) return res.status(500).json({ error: "Vicidial credentials not configured" });
+
+  const { campaign_id } = req.body;
+  if (!campaign_id) return res.status(400).json({ error: "Missing required field: campaign_id" });
+
+  try {
+    const params = new URLSearchParams({
+      source: "test", user: apiUser, pass: apiPass,
+      function: "reset_hopper", campaign_id,
+    });
+    const url = `${VICIDIAL_BASE_URL}/non_agent_api.php?${params.toString()}`;
+    const response = await fetch(url);
+    const text = await response.text();
+    const success = text.includes("SUCCESS") || text.includes("hopper");
+    return res.status(success ? 200 : 502).json({ success, campaign_id, response: text });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Unknown error" });
+  }
+});
+
 app.get("/users", async (req, res) => {
   const adminUser = process.env.VICIDIAL_ADMIN_USER || process.env.VICIDIAL_API_USER;
   const adminPass = process.env.VICIDIAL_ADMIN_PASS || process.env.VICIDIAL_API_PASS;
@@ -191,6 +214,36 @@ app.post("/update-lead", async (req, res) => {
     const text = await response.text();
     const success = text.includes("SUCCESS");
     return res.status(success ? 200 : 502).json({ success, response: text });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Unknown error" });
+  }
+});
+
+app.post("/delete-lead", async (req, res) => {
+  const apiUser = process.env.VICIDIAL_API_USER;
+  const apiPass = process.env.VICIDIAL_API_PASS;
+  if (!apiUser || !apiPass) return res.status(500).json({ error: "Vicidial credentials not configured" });
+
+  const { lead_id, vendor_lead_code } = req.body || {};
+  if (!lead_id && !vendor_lead_code) {
+    return res.status(400).json({ error: "lead_id or vendor_lead_code is required" });
+  }
+
+  try {
+    const params = new URLSearchParams({
+      source: "crm", user: apiUser, pass: apiPass, function: "update_lead",
+      search_method: lead_id ? "LEAD_ID" : "VENDOR_LEAD_CODE",
+      delete_lead: "Y", custom_fields: "Y", records: "1",
+    });
+    if (lead_id) params.set("lead_id", String(lead_id));
+    if (vendor_lead_code) params.set("vendor_lead_code", String(vendor_lead_code));
+
+    const url = `${VICIDIAL_BASE_URL}/non_agent_api.php?${params.toString()}`;
+    const response = await fetch(url);
+    const text = await response.text();
+    const success = text.includes("SUCCESS");
+    const notFound = /NO MATCH|NOT FOUND/i.test(text);
+    return res.status(success || notFound ? 200 : 502).json({ success, not_found: notFound, response: text });
   } catch (err) {
     return res.status(500).json({ error: err.message || "Unknown error" });
   }
