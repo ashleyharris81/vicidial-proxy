@@ -167,21 +167,96 @@ app.get("/users", async (req, res) => {
 });
 
 // --- admin UI helpers (campaign copy is not available in non_agent_api) ---
-async function adminLogin() {
+function adminCreds() {
   const adminUser = process.env.VICIDIAL_ADMIN_USER || process.env.VICIDIAL_API_USER;
   const adminPass = process.env.VICIDIAL_ADMIN_PASS || process.env.VICIDIAL_API_PASS;
   if (!adminUser || !adminPass) throw new Error("Admin credentials not configured");
-
-  const loginRes = await fetch(`${VICIDIAL_BASE_URL}/admin.php`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `PHP_AUTH_USER=${encodeURIComponent(adminUser)}&PHP_AUTH_PW=${encodeURIComponent(adminPass)}`,
-    redirect: "manual",
-  });
-  const cookies = loginRes.headers.raw()["set-cookie"] || [];
-  const cookie = cookies.map((c) => c.split(";")[0]).join("; ");
-  return { cookie, adminUser, adminPass };
+  return { adminUser, adminPass };
 }
+
+function badLogin(html) {
+  return /Login incorrect|LOGIN INCORRECT|BAD\|/i.test(html || "");
+}
+
+async function adminSession() {
+  const { adminUser, adminPass } = adminCreds();
+  const basic = "Basic " + Buffer.from(`${adminUser}:${adminPass}`).toString("base64");
+  const attempts = [];
+
+  {
+    const r = await fetch(`${VICIDIAL_BASE_URL}/admin.php`, { headers: { Authorization: basic } });
+    const html = await r.text();
+    attempts.push({ mode: "basic", status: r.status, bad: badLogin(html) });
+    if (r.ok && !badLogin(html)) {
+      return {
+        mode: "basic",
+        attempts,
+        fetch: (url, opts = {}) =>
+          fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: basic } }),
+      };
+    }
+  }
+
+  {
+    const r = await fetch(`${VICIDIAL_BASE_URL}/admin.php`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `PHP_AUTH_USER=${encodeURIComponent(adminUser)}&PHP_AUTH_PW=${encodeURIComponent(adminPass)}`,
+      redirect: "manual",
+    });
+    const html = await r.text();
+    const cookies = r.headers.raw()["set-cookie"] || [];
+    const cookie = cookies.map((c) => c.split(";")[0]).join("; ");
+    attempts.push({ mode: "cookie", status: r.status, bad: badLogin(html), cookie: !!cookie });
+    if (cookie && !badLogin(html)) {
+      return {
+        mode: "cookie",
+        attempts,
+        fetch: (url, opts = {}) =>
+          fetch(url, { ...opts, headers: { ...(opts.headers || {}), Cookie: cookie } }),
+      };
+    }
+  }
+
+  {
+    const authQs = `PHP_AUTH_USER=${encodeURIComponent(adminUser)}&PHP_AUTH_PW=${encodeURIComponent(adminPass)}`;
+    const r = await fetch(`${VICIDIAL_BASE_URL}/admin.php?${authQs}`);
+    const html = await r.text();
+    attempts.push({ mode: "query", status: r.status, bad: badLogin(html) });
+    if (r.ok && !badLogin(html)) {
+      return {
+        mode: "query",
+        attempts,
+        fetch: (url, opts = {}) => {
+          if ((opts.method || "GET").toUpperCase() === "POST") {
+            return fetch(url, { ...opts, body: `${opts.body}&${authQs}` });
+          }
+          return fetch(url + (url.includes("?") ? "&" : "?") + authQs, opts);
+        },
+      };
+    }
+  }
+
+  const err = new Error("Admin login failed");
+  err.attempts = attempts;
+  throw err;
+}
+
+app.get("/admin-check", async (req, res) => {
+  try {
+    const s = await adminSession();
+    return res.json({ ok: true, mode: s.mode, attempts: s.attempts });
+  } catch (err) {
+    return res.status(502).json({
+      ok: false,
+      error: err.message,
+      attempts: err.attempts || null,
+      has_admin_user: !!process.env.VICIDIAL_ADMIN_USER,
+      has_admin_pass: !!process.env.VICIDIAL_ADMIN_PASS,
+      has_api_user: !!process.env.VICIDIAL_API_USER,
+    });
+  }
+});
 
 function parseFormFields(html) {
   const fields = {};
@@ -207,7 +282,6 @@ function parseFormFields(html) {
   return fields;
 }
 
-// POST /copy-campaign { source_campaign_id, new_campaign_id, new_campaign_name }
 app.post("/copy-campaign", async (req, res) => {
   const { source_campaign_id, new_campaign_id, new_campaign_name } = req.body || {};
   if (!source_campaign_id || !new_campaign_id || !new_campaign_name) {
@@ -218,15 +292,13 @@ app.post("/copy-campaign", async (req, res) => {
   }
 
   try {
-    const { cookie } = await adminLogin();
+    const session = await adminSession();
 
-    // Load the Vicidial "copy campaign" form for the source campaign
     const formUrl = `${VICIDIAL_BASE_URL}/admin.php?ADD=311&campaign_id=${encodeURIComponent(source_campaign_id)}`;
-    const formRes = await fetch(formUrl, { headers: { Cookie: cookie } });
+    const formRes = await session.fetch(formUrl);
     const formHtml = await formRes.text();
 
     const fields = parseFormFields(formHtml);
-    // Override the identifying fields with the new campaign
     fields.ADD = fields.ADD && /^31\d$/.test(fields.ADD) ? fields.ADD : "312";
     fields.campaign_id = new_campaign_id;
     fields.campaign_name = new_campaign_name;
@@ -234,20 +306,18 @@ app.post("/copy-campaign", async (req, res) => {
     if ("new_campaign_name" in fields) fields.new_campaign_name = new_campaign_name;
     if ("copy_campaign_id" in fields) fields.copy_campaign_id = source_campaign_id;
     if ("old_campaign_id" in fields) fields.old_campaign_id = source_campaign_id;
-    // never copy the source lists/leads across
     for (const k of Object.keys(fields)) {
       if (/copy_lists|copy_leads|copy_hopper/i.test(k)) fields[k] = "0";
     }
 
     const body = new URLSearchParams(fields).toString();
-    const postRes = await fetch(`${VICIDIAL_BASE_URL}/admin.php`, {
+    const postRes = await session.fetch(`${VICIDIAL_BASE_URL}/admin.php`, {
       method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
     const postHtml = await postRes.text();
 
-    // Verify via the API campaign list
     const apiUser = process.env.VICIDIAL_API_USER;
     const apiPass = process.env.VICIDIAL_API_PASS;
     const verifyParams = new URLSearchParams({
@@ -261,11 +331,12 @@ app.post("/copy-campaign", async (req, res) => {
     return res.status(exists ? 200 : 502).json({
       success: exists,
       campaign_id: new_campaign_id,
+      auth_mode: session.mode,
       form_fields: Object.keys(fields),
       snippet: postHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 800),
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message || "Unknown error" });
+    return res.status(500).json({ error: err.message || "Unknown error", attempts: err.attempts || null });
   }
 });
 
