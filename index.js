@@ -178,11 +178,13 @@ function badLogin(html) {
   return /Login incorrect|LOGIN INCORRECT|BAD\|/i.test(html || "");
 }
 
+// Tries several auth strategies against the admin UI and returns a working fetcher
 async function adminSession() {
   const { adminUser, adminPass } = adminCreds();
   const basic = "Basic " + Buffer.from(`${adminUser}:${adminPass}`).toString("base64");
   const attempts = [];
 
+  // 1) HTTP Basic auth
   {
     const r = await fetch(`${VICIDIAL_BASE_URL}/admin.php`, { headers: { Authorization: basic } });
     const html = await r.text();
@@ -197,6 +199,7 @@ async function adminSession() {
     }
   }
 
+  // 2) POST login form -> session cookie
   {
     const r = await fetch(`${VICIDIAL_BASE_URL}/admin.php`, {
       method: "POST",
@@ -218,6 +221,7 @@ async function adminSession() {
     }
   }
 
+  // 3) credentials appended to every request (query string / form body)
   {
     const authQs = `PHP_AUTH_USER=${encodeURIComponent(adminUser)}&PHP_AUTH_PW=${encodeURIComponent(adminPass)}`;
     const r = await fetch(`${VICIDIAL_BASE_URL}/admin.php?${authQs}`);
@@ -242,6 +246,7 @@ async function adminSession() {
   throw err;
 }
 
+// Diagnostic: which admin auth mode works
 app.get("/admin-check", async (req, res) => {
   try {
     const s = await adminSession();
@@ -257,6 +262,7 @@ app.get("/admin-check", async (req, res) => {
     });
   }
 });
+
 
 function parseFormFields(html) {
   const fields = {};
@@ -282,6 +288,7 @@ function parseFormFields(html) {
   return fields;
 }
 
+// POST /copy-campaign { source_campaign_id, new_campaign_id, new_campaign_name }
 app.post("/copy-campaign", async (req, res) => {
   const { source_campaign_id, new_campaign_id, new_campaign_name } = req.body || {};
   if (!source_campaign_id || !new_campaign_id || !new_campaign_name) {
@@ -294,11 +301,13 @@ app.post("/copy-campaign", async (req, res) => {
   try {
     const session = await adminSession();
 
+    // Load the Vicidial "copy campaign" form for the source campaign
     const formUrl = `${VICIDIAL_BASE_URL}/admin.php?ADD=311&campaign_id=${encodeURIComponent(source_campaign_id)}`;
     const formRes = await session.fetch(formUrl);
     const formHtml = await formRes.text();
 
     const fields = parseFormFields(formHtml);
+    // Override the identifying fields with the new campaign
     fields.ADD = fields.ADD && /^31\d$/.test(fields.ADD) ? fields.ADD : "312";
     fields.campaign_id = new_campaign_id;
     fields.campaign_name = new_campaign_name;
@@ -306,6 +315,7 @@ app.post("/copy-campaign", async (req, res) => {
     if ("new_campaign_name" in fields) fields.new_campaign_name = new_campaign_name;
     if ("copy_campaign_id" in fields) fields.copy_campaign_id = source_campaign_id;
     if ("old_campaign_id" in fields) fields.old_campaign_id = source_campaign_id;
+    // never copy the source lists/leads across
     for (const k of Object.keys(fields)) {
       if (/copy_lists|copy_leads|copy_hopper/i.test(k)) fields[k] = "0";
     }
@@ -318,6 +328,9 @@ app.post("/copy-campaign", async (req, res) => {
     });
     const postHtml = await postRes.text();
 
+
+
+    // Verify via the API campaign list
     const apiUser = process.env.VICIDIAL_API_USER;
     const apiPass = process.env.VICIDIAL_API_PASS;
     const verifyParams = new URLSearchParams({
@@ -331,12 +344,32 @@ app.post("/copy-campaign", async (req, res) => {
     return res.status(exists ? 200 : 502).json({
       success: exists,
       campaign_id: new_campaign_id,
-      auth_mode: session.mode,
       form_fields: Object.keys(fields),
       snippet: postHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 800),
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message || "Unknown error", attempts: err.attempts || null });
+    return res.status(500).json({ error: err.message || "Unknown error" });
+  }
+});
+
+// GET /copy-campaign-debug?source_campaign_id=Spainn
+// Returns Vicidial's copy-campaign form HTML + parsed fields so we can inspect exact field names.
+app.get("/copy-campaign-debug", async (req, res) => {
+  const { source_campaign_id } = req.query;
+  if (!source_campaign_id) return res.status(400).json({ error: "source_campaign_id query param is required" });
+  try {
+    const session = await adminSession();
+    const formUrl = `${VICIDIAL_BASE_URL}/admin.php?ADD=311&campaign_id=${encodeURIComponent(source_campaign_id)}`;
+    const formRes = await session.fetch(formUrl);
+    const formHtml = await formRes.text();
+    return res.json({
+      source_campaign_id,
+      formUrl,
+      parsed_fields: parseFormFields(formHtml),
+      raw_html: formHtml,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Unknown error" });
   }
 });
 
