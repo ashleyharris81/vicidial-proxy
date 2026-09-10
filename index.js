@@ -289,6 +289,8 @@ function parseFormFields(html) {
 }
 
 // POST /copy-campaign { source_campaign_id, new_campaign_id, new_campaign_name }
+// Uses Vicidial's real "Copy Campaign" form (ADD=12 -> POST ADD=20).
+// Copies campaign settings only; Vicidial's copy does NOT copy lists or leads.
 app.post("/copy-campaign", async (req, res) => {
   const { source_campaign_id, new_campaign_id, new_campaign_name } = req.body || {};
   if (!source_campaign_id || !new_campaign_id || !new_campaign_name) {
@@ -301,25 +303,14 @@ app.post("/copy-campaign", async (req, res) => {
   try {
     const session = await adminSession();
 
-    // Load the Vicidial "copy campaign" form for the source campaign
-    const formUrl = `${VICIDIAL_BASE_URL}/admin.php?ADD=311&campaign_id=${encodeURIComponent(source_campaign_id)}`;
-    const formRes = await session.fetch(formUrl);
-    const formHtml = await formRes.text();
-
-    const fields = parseFormFields(formHtml);
-    // Override the identifying fields with the new campaign
-    fields.ADD = fields.ADD && /^31\d$/.test(fields.ADD) ? fields.ADD : "312";
-    fields.campaign_id = new_campaign_id;
-    fields.campaign_name = new_campaign_name;
-    if ("new_campaign_id" in fields) fields.new_campaign_id = new_campaign_id;
-    if ("new_campaign_name" in fields) fields.new_campaign_name = new_campaign_name;
-    if ("copy_campaign_id" in fields) fields.copy_campaign_id = source_campaign_id;
-    if ("old_campaign_id" in fields) fields.old_campaign_id = source_campaign_id;
-    // never copy the source lists/leads across
-    for (const k of Object.keys(fields)) {
-      if (/copy_lists|copy_leads|copy_hopper/i.test(k)) fields[k] = "0";
-    }
-
+    const fields = {
+      ADD: "20",
+      DB: "0",
+      campaign_id: String(new_campaign_id),
+      campaign_name: String(new_campaign_name),
+      source_campaign_id: String(source_campaign_id),
+      SUBMIT: "SUBMIT",
+    };
     const body = new URLSearchParams(fields).toString();
     const postRes = await session.fetch(`${VICIDIAL_BASE_URL}/admin.php`, {
       method: "POST",
