@@ -373,6 +373,33 @@ app.get("/copy-campaign-debug", async (req, res) => {
   }
 });
 
+// GET /admin-fetch?add=33&campaign_id=Spainn
+// Generic authenticated admin-page fetcher for debugging Vicidial admin forms.
+// Passes through any extra query params to admin.php.
+app.get("/admin-fetch", async (req, res) => {
+  const { add, ...rest } = req.query;
+  if (!add) return res.status(400).json({ error: "add query param is required (e.g. add=33)" });
+  try {
+    const session = await adminSession();
+    const qs = new URLSearchParams({ ADD: String(add) });
+    for (const [k, v] of Object.entries(rest)) qs.set(k, String(v));
+    const url = `${VICIDIAL_BASE_URL}/admin.php?${qs.toString()}`;
+    const response = await session.fetch(url);
+    const html = await response.text();
+    const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
+    return res.json({
+      url,
+      status: response.status,
+      title: titleMatch ? titleMatch[1] : null,
+      parsed_fields: parseFormFields(html),
+      html_length: html.length,
+      raw_html: html,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Unknown error" });
+  }
+});
+
 app.post("/create-list", async (req, res) => {
   const apiUser = process.env.VICIDIAL_API_USER;
   const apiPass = process.env.VICIDIAL_API_PASS;
